@@ -1,0 +1,12 @@
+File ID	File Name	Data Category	Data Type	Project ID	Case ID	Sample ID	Sample Type
+ee91a3d3-3f6b-488f-908c-80b3cfb15be5	12966fcf-89f5-4e10-82fc-1ca4de192ca7.rna_seq.augmented_star_gene_counts.tsv	Transcriptome Profiling	Gene Expression Quantification	TCGA-OV	TCGA-24-2036	TCGA-24-2036-01A	Primary Tumor
+d71526e0-d0a0-4b29-9fab-c6987ddf9b96	c99daa88-5672-437c-af99-5b31f28ec087.rna_seq.augmented_star_gene_counts.tsv	Transcriptome Profiling	Gene Expression Quantification	TCGA-OV	TCGA-13-0887	TCGA-13-0887-01A	Primary Tumor
+c6f4a745-1426-4cee-87d3-e8123aacb60f	5c58a396-5f7b-4374-a6e7-09f381d945dd.rna_seq.augmented_star_gene_counts.tsv	Transcriptome Profiling	Gene Expression Quantification	TCGA-OV	TCGA-13-0884	TCGA-13-0884-01B	Primary Tumor
+acec3a68-1f44-4689-8547-18cfc1182303	f25d516a-d4ea-4f89-9f6e-9f41c1634505.rna_seq.augmented_star_gene_counts.tsv	Transcriptome Profiling	Gene Expression Quantification	TCGA-OV	TCGA-24-1556	TCGA-24-1556-01A	Primary Tumor
+49b698b6-405f-4cbb-b470-b98c29151968	cf8f83cf-db75-479f-8f27-f0d74f262c91.rna_seq.augmented_star_gene_counts.tsv	Transcriptome Profiling	Gene Expression Quantification	TCGA-OV	TCGA-25-1328	TCGA-25-1328-01A	Primary Tumor
+68806e60-8285-404a-94ac-690eef71bb0b	50c62016-a463-4dba-a179-146df17fb5dd.rna_seq.augmented_star_gene_counts.tsv	Transcriptome Profiling	Gene Expression Quantification	TCGA-OV	TCGA-04-1350	TCGA-04-1350-01A	Primary Tumor
+87372980-d776-4481-9c1a-c6cfc22fdea1	de46493c-07c7-4884-9361-8ab7d5cd0a72.rna_seq.augmented_star_gene_counts.tsv	Transcriptome Profiling	Gene Expression Quantification	TCGA-OV	TCGA-13-1403	TCGA-13-1403-01A	Primary Tumor
+cef0a249-d479-4f46-9b16-dbd9781843bc	7211b055-44a1-4b87-a97e-ce36fdca987d.rna_seq.augmented_star_gene_counts.tsv	Transcriptome Profiling	Gene Expression Quantification	TCGA-OV	TCGA-24-1546	TCGA-24-1546-01A	Primary Tumor
+042112c1-7fab-4aba-9a10-91509b80de7b	d6c55f59-f1cd-48bf-9628-94fcfb867bff.rna_seq.augmented_star_gene_counts.tsv	Transcriptome Profiling	Gene Expression Quantification	TCGA-OV	TCGA-29-1688	TCGA-29-1688-01A	Primary Tumor
+7a74d41c-46f9-494a-a971-58885a906874	94e50abd-1c5d-4267-b36e-25d229716049.rna_seq.augmented_star_gene_counts.tsv	Transcriptome Profiling	Gene Expression Quantification	TCGA-OV	TCGA-23-2081	TCGA-23-2081-01A	Primary Tumor
+760a21b6-9a22-487e-9a35-569c0065c1b4	9ae61124-172b-4d16-aadc-bc7c096002cf.rna_seq.augmented_star_gene_counts.tsv	Transcriptome Profiling	Gene Expression Quantification	TCGA-OV	TCGA-24-1555	TCGA-24-1555-01A	Primary Tumor

@@ -1,0 +1,467 @@
+---
+title: "Differential Gene Expression for Ovarian Cancer"
+author: "Vaishnavi Sathiyamoorthy"
+date: "2024-10-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+```
+
+# Set Up
+
+```{r}
+source("https://utexas.box.com/shared/static/reml2t600ugc7ub3ogo69qhg8zrp32px.r")
+cleanEnv()
+opt<-list()
+
+opt$project    <- "TCGA-OV"
+opt$sample.type<- "Primary Tumor"
+opt$group1Desc <- "Lived Less than or Equal to 5 years"
+opt$group2Desc <- "Lived more than 5 years"
+opt$grp1File<- "LessThan5.tsv"
+opt$grp2File<- "MoreThan5.tsv"
+
+opt$biocPackages <- c(
+  "TCGAbiolinks","DESeq2"
+)
+```
+
+```{r}
+library(here)
+library(ggplot2)
+library(TCGAbiolinks)
+library(DESeq2)
+
+opt$minPerGroup <- 11           # Used to control warning about small sample size
+opt$maxPerGroup <- 50           # Used to control warning about large sample size
+opt$sampleToMaxLogic <- T       # Used to control whether query is sampled to a smaller size when large
+opt$sampleToMax.SeedLogic <- T  # Used to control whether seed is set prior to sampling
+opt$sampleToMax.Seed <- 10112023# Used to specify the seed for random number generation
+
+opt$fdr.max <- 0.01 ## Maximum false discovery rate adjusted p-value cutoff to be a DEG
+opt$afc.min <- 1.50 ## Minimum absolute(Log2 fold change) cutoff to be considered DEG
+opt$wd <- here()
+
+if(!dir.exists(opt$wd)){
+  dir.create(opt$wd,recursive = T,showWarnings = T)
+}
+setwd(opt$wd)
+
+opt$pckDir  <- c(
+  file.path(opt$wd,"R_gdc"),           #This is where any subsequent packages you install will end up
+  "/stor/scratch/Bio321G_NB_Fall2023/R" #This is my package library made for this assignment with (largely) compatible software versions.
+)
+opt$gdcPath <- here("/GDCdata") #We can all download GDC files to this file. Please don't put other files here.
+opt$createPckDir <- T # This toggles the if statement that adjusts the package directory
+opt$createGdcDir <- T # This toggles the if statement that adjusts the GDC data directory
+
+if(!dir.exists(opt$pckDir[1])){
+  message("Creating home package directory.")
+  dir.create(file.path(opt$wd,"R_gdc"),recursive = T,showWarnings = T)
+}
+if(!all(dir.exists(opt$pckDir))){
+  message("Changing package directory to:")
+  opt$pckDir <- file.path(opt$wd,"R_gdc")
+  message(opt$pckDir)
+}
+
+.libPaths(opt$pckDir)
+message(paste0(.libPaths(),sep = "\n"))
+if(!all(opt$biocPackages%in%installed.packages())){
+  ## Install an installer tool
+  # Installation goes into custom library path due to file permission issues with some packages
+  if(!"BiocManager"%in%installed.packages()){
+    install.packages("BiocManager", lib = opt$pckDir)
+  }
+  
+  ## Update the installed packages
+  update.packages(instlib = opt$pckDir,ask = F)
+  
+  ## Install on modern version of R
+  # Windows users will need to install RTools program first (not a package)
+  BiocManager::install(
+    opt$biocPackages, lib = opt$pckDir,
+    ask = F,update = T
+  )
+}
+
+if(!all(opt$pckDir%in%.libPaths())){
+  print("Setting lib paths...")
+  .libPaths(opt$pckDir)
+}
+```
+
+# Querying Data
+
+```{r}
+query1 <- GDCquery(
+  project = opt$project,
+  data.category = "Transcriptome Profiling",
+  experimental.strategy = "RNA-Seq",
+  data.type = "Gene Expression Quantification"
+)
+
+samDf <- query1$results[[1]]
+table(samDf$sample_type)
+
+group1 <- readr::read_tsv(opt$grp1File)
+group2 <- readr::read_tsv(opt$grp2File)
+
+if(!all(!group1$`Sample ID`%in%group2$`Sample ID`)&all(!group2$`Sample ID`%in%group1$`Sample ID`)){
+  stop("The group IDs were not exclusive...")
+}
+groupIds<- c(group1$`Sample ID`,group2$`Sample ID`)
+samDf   <- samDf[samDf$sample.submitter_id%in%groupIds,]
+table(samDf$sample_type)
+
+if(opt$sampleToMaxLogic){
+  samDf.1 <- samDf[samDf$sample.submitter_id%in%group1$`Sample ID`,]
+  samDf.2 <- samDf[samDf$sample.submitter_id%in%group2$`Sample ID`,]
+  if(nrow(samDf.1)>opt$maxPerGroup){
+    if(opt$sampleToMax.SeedLogic){set.seed(opt$sampleToMax.Seed)}
+    samDf.1 <- samDf.1[sample(1:nrow(samDf.1),size = opt$maxPerGroup),]
+  }
+  if(nrow(samDf.2)>opt$maxPerGroup){
+    if(opt$sampleToMax.SeedLogic){set.seed(opt$sampleToMax.Seed*2+1)} # Just avoiding using numbers I am likely to change opt$sampleToMax.Seed to
+    samDf.2 <- samDf.2[sample(1:nrow(samDf.2),size = opt$maxPerGroup),]
+  }
+  samDf<-rbind(samDf.1,samDf.2)
+}
+
+desiredBarcodes <- samDf$cases
+if(length(desiredBarcodes)==0){stop("Something went wrong getting barcodes!")}
+```
+
+```{r}
+query2 <- GDCquery(
+  project = opt$project,
+  data.category = "Transcriptome Profiling",
+  experimental.strategy = "RNA-Seq",
+  data.type = "Gene Expression Quantification",
+  barcode = desiredBarcodes,
+  sample.type = opt$sample.type
+)
+nrow(query2$results[[1]])
+
+if(!file.exists(opt$gdcPath)){
+  if(opt$createGdcDir){
+    warning("Creating directory to store GDC data in the wd.")
+    opt$gdcPath <- "./GDCdata/"
+    dir.create(opt$gdcPath,recursive = T,showWarnings = T)
+  }else{
+    stop("Oh, no! The file you are trying to store GDCdata in doesn't exist.")
+  }
+}
+
+GDCdownload(query2,method = "api",
+            files.per.chunk = 10,
+            directory = opt$gdcPath)
+```
+
+# Preparing Data
+
+```{r}
+dds <- GDCprepare(query = query2,directory = opt$gdcPath)
+
+ddsLogic <-
+  exists("dds")&&
+  class(dds)=="RangedSummarizedExperiment"&&
+  nrow(as.data.frame(colData(dds)))>0
+if(!ddsLogic){stop("Something went wrong in GDCprepare()!")}
+if(sum(duplicated(dds$sample_submitter_id))>0){
+  warning("Some IDs present more than once. Consider subsetting if this was unintentional.")
+}
+if(length(unique(dds$sample_type))>1){
+  warning("More than one type of sample tissue type present. Consider subsetting if this was unintentional.")
+}
+
+dds$group1 <- dds$sample_submitter_id%in%group1$`Sample ID`
+dds$group2 <- dds$sample_submitter_id%in%group2$`Sample ID`
+
+if(!all(dds$group1==!dds$group2)){
+  stop("Your groupings are not mutually exclusive")
+}
+dds$comp <- factor(dds$group2,levels = c("FALSE","TRUE"))
+levels(dds$comp)<-gsub(" ","_",levels(dds$comp))
+```
+
+# Use DESeq2 to filter the data more!
+
+```{r}
+## Convert to DESeq object
+dds <- DESeqDataSet(dds, design = ~ comp)
+
+## Normalize the read depth values
+dds <- estimateSizeFactors(dds)
+?estimateSizeFactors
+## Filter loci with extremely low RD
+## Isolate the raw counts
+rawCounts  <- as.data.frame(counts(dds, normalized = F))
+
+## Filter based on % of each grouping with 0 RD
+grp1PctWith0 <- rowMeans((rawCounts[,dds$group1]==0))
+grp2PctWith0 <- rowMeans((rawCounts[,dds$group2]==0))
+maxPct0Cutoff <- 0.9
+```
+
+```{r}
+## Visualize low rd loci
+hist(c(grp1PctWith0,grp2PctWith0),1000)
+abline(v = maxPct0Cutoff,col="red")
+##Do the subset
+pctWith0Logic <- grp1PctWith0<maxPct0Cutoff&grp2PctWith0<maxPct0Cutoff
+dds <- dds[which(pctWith0Logic),]
+
+hist(colMeans(rawCounts),1000,border="blue")
+```
+
+# Filter samples based on normalized RD
+
+```{r}
+## Isolate the normalized read depths
+normCounts <- as.data.frame(counts(dds, normalized = T))
+
+## Determining the most variable rows
+perLocusVar   <- apply(normCounts,1,var)
+
+## Calculating the 25% quantile of this data
+pcaLocusLogic <- perLocusVar>quantile(perLocusVar,probs=0.25)
+
+## Use a principal component analysis to visualize the distribution
+pca <- prcomp(t(normCounts[which(pcaLocusLogic),]),scale. = T)
+
+## Calculate means from the standard normal
+pca1Cutoffs <- mean(pca$x[,1])+c(-1,1)*4*sd(pca$x[,1])
+plot(pca$x[,1],pca$x[,2],asp = 1)
+abline(v = pca1Cutoffs,col="red")
+```
+
+# Do differential expression analysis
+
+```{r}
+###### Convert to DESeq object ######
+## This is redundant with a previous step,
+## However, adding helps to make sure the object is intact after filtering.
+dds <- DESeqDataSet(dds, design = ~ comp)
+
+## Because we have significantly changed the loci used, recalculate normalization
+dds <- estimateSizeFactors(dds)
+
+## Run the Deseq2 package analysis
+dds <- DESeq(dds)
+res <- results(dds) # Organizes the results
+
+##### Accumulate data into a data.frame #####
+## Add in gene data from the rowRanges section of the SummarizedExperiment object
+## Adding columns with the same name causes problems with ggplot2, so
+## It only adds other columns
+colsAdded <- !colnames(as.data.frame(rowRanges(dds)))%in%colnames(as.data.frame(res))
+resOutput <- cbind(
+  as.data.frame(rowRanges(dds))[,colsAdded],
+  as.data.frame(res)
+)
+```
+
+# Plots
+
+```{r}
+library(ggplot2)
+resOutput$log10 <- -log10(resOutput$padj)
+ggplot(resOutput, aes(x = log2FoldChange, y = -log10(padj), group = padj < 0.01)) + 
+  geom_point(aes(color = log(baseMean), shape = padj < 0.01)) + 
+  xlab("Log2(Fold Change)") + ylab("-log10(FDR-Adjusted p-values") + 
+  ggtitle("Differential Gene Expression in TCGA-OV Between Those Who Lived Less than Or \nEqual to 5 Years and Those Who Lived More Than 5 Years") +
+  theme(plot.title = element_text(size=20), axis.title = element_text(size = 16), legend.text = element_text(size=13), legend.title = element_text(size=14)) +
+  scale_color_gradient(low = 'purple', high = "yellow") + 
+  labs(colour = "Base Mean Count", shape = "Sig. DE") + 
+  geom_vline(xintercept = -2.5, linetype = 2, color = "red") + 
+  geom_hline(yintercept = 2, linetype = 2, color = "black") + 
+  annotate("text", x = -5.65, y = 2.6, label = "TKTL1", size = 4) +
+  annotate("text", x = -6.35, y = 2.6, label = "OLFM4", size = 4) +
+  annotate("text", x = -3.281, y = 2.7, label = "UPK1A", size = 4) + 
+  annotate("text", x = -4.517, y = 2.7, label = "CPB1", size = 4) +
+  annotate("text", x = -3.05, y = 2.5, label = "NCCRP1", size = 4) +
+  annotate("text", x = -5.54, y = 2.1, label = "AC010789.1", size = 4)
+ggsave('volc_plot.png', plot = last_plot())
+```
+
+```{r}
+library(dplyr)
+genes <- c("TKTL1", "OLFM4", "UPK1A", "CPB1", "NCCRP1", "AC010789.1")
+df <- resOutput %>% filter(gene_name %in% genes)
+normCounts  <- as.data.frame(counts(dds, normalized = T))
+normCounts_group1 <- NA
+for (i in 1:39) {
+  normCounts_group1 <- c(normCounts_group1, as.matrix(normCounts[df$gene_id[1], colnames(dds[, dds$group1])])[i])
+}
+normCounts_group2 <- NA
+for (i in 1:11) {
+  normCounts_group2 <- c(normCounts_group2, as.matrix(normCounts[df$gene_id[1], colnames(dds[, dds$group2])])[i])
+}
+df_1 <- data.frame()
+df_1 <- data.frame(rep("group1", 39))
+df_1 <- df_1 %>% rename("group" = 'rep..group1...39.')
+df_1$normCounts <- normCounts_group1[2:40]
+
+df_2 <- data.frame()
+df_2 <- data.frame(rep("group2", 11))
+df_2 <- df_2 %>% rename("group" = 'rep..group2...11.')
+df_2$normCounts <- normCounts_group1[2:12]
+
+df <- rbind(df_1, df_2)
+ggplot(df, aes(group, normCounts, fill = group)) + geom_violin() + xlab("Group") + ylab("Normalized Counts") +
+  ggtitle("Distribution of Normalized Counts of TKTL1 by Group") 
+ggsave('TKTL1.png', plot = last_plot(), units = 'px', width = 2000, height = 1000)
+```
+
+```{r}
+df <- resOutput %>% filter(gene_name %in% genes)
+normCounts  <- as.data.frame(counts(dds, normalized = T))
+normCounts_group1 <- NA
+for (i in 1:39) {
+  normCounts_group1 <- c(normCounts_group1, as.matrix(normCounts[df$gene_id[2], colnames(dds[, dds$group1])])[i])
+}
+normCounts_group2 <- NA
+for (i in 1:11) {
+  normCounts_group2 <- c(normCounts_group2, as.matrix(normCounts[df$gene_id[2], colnames(dds[, dds$group2])])[i])
+}
+df_1 <- data.frame()
+df_1 <- data.frame(rep("group1", 39))
+df_1 <- df_1 %>% rename("group" = 'rep..group1...39.')
+df_1$normCounts <- normCounts_group1[2:40]
+
+df_2 <- data.frame()
+df_2 <- data.frame(rep("group2", 11))
+df_2 <- df_2 %>% rename("group" = 'rep..group2...11.')
+df_2$normCounts <- normCounts_group1[2:12]
+
+df <- rbind(df_1, df_2)
+ggplot(df, aes(group, normCounts, fill = group)) + geom_violin() + xlab("Group") + ylab("Normalized Counts") +
+  ggtitle("Distribution of Normalized Counts of OLFM4 by Group")
+ggsave('OLFM4.png', plot = last_plot(), units = 'px', width = 2000, height = 1000)
+```
+
+```{r}
+df <- resOutput %>% filter(gene_name %in% genes)
+normCounts  <- as.data.frame(counts(dds, normalized = T))
+normCounts_group1 <- NA
+for (i in 1:39) {
+  normCounts_group1 <- c(normCounts_group1, as.matrix(normCounts[df$gene_id[3], colnames(dds[, dds$group1])])[i])
+}
+normCounts_group2 <- NA
+for (i in 1:11) {
+  normCounts_group2 <- c(normCounts_group2, as.matrix(normCounts[df$gene_id[3], colnames(dds[, dds$group2])])[i])
+}
+df_1 <- data.frame()
+df_1 <- data.frame(rep("group1", 39))
+df_1 <- df_1 %>% rename("group" = 'rep..group1...39.')
+df_1$normCounts <- normCounts_group1[2:40]
+
+df_2 <- data.frame()
+df_2 <- data.frame(rep("group2", 11))
+df_2 <- df_2 %>% rename("group" = 'rep..group2...11.')
+df_2$normCounts <- normCounts_group1[2:12]
+
+df <- rbind(df_1, df_2)
+ggplot(df, aes(group, normCounts, fill = group)) + geom_violin() + xlab("Group") + ylab("Normalized Counts") +
+  ggtitle("Distribution of Normalized Counts of UPK1A by Group")
+ggsave('UPK1A.png', plot = last_plot(), units = 'px', width = 2000, height = 1000)
+```
+
+```{r}
+df <- resOutput %>% filter(gene_name %in% genes)
+normCounts  <- as.data.frame(counts(dds, normalized = T))
+normCounts_group1 <- NA
+for (i in 1:39) {
+  normCounts_group1 <- c(normCounts_group1, as.matrix(normCounts[df$gene_id[4], colnames(dds[, dds$group1])])[i])
+}
+normCounts_group2 <- NA
+for (i in 1:11) {
+  normCounts_group2 <- c(normCounts_group2, as.matrix(normCounts[df$gene_id[4], colnames(dds[, dds$group2])])[i])
+}
+df_1 <- data.frame()
+df_1 <- data.frame(rep("group1", 39))
+df_1 <- df_1 %>% rename("group" = 'rep..group1...39.')
+df_1$normCounts <- normCounts_group1[2:40]
+
+df_2 <- data.frame()
+df_2 <- data.frame(rep("group2", 11))
+df_2 <- df_2 %>% rename("group" = 'rep..group2...11.')
+df_2$normCounts <- normCounts_group1[2:12]
+
+df <- rbind(df_1, df_2)
+ggplot(df, aes(group, normCounts, fill = group)) + geom_violin() + xlab("Group") + ylab("Normalized Counts") +
+  ggtitle("Distribution of Normalized Counts of CPB1 by Group")
+ggsave('CPB1.png', plot = last_plot(), units = 'px', width = 2000, height = 1000)
+```
+
+```{r}
+df <- resOutput %>% filter(gene_name %in% genes)
+normCounts  <- as.data.frame(counts(dds, normalized = T))
+normCounts_group1 <- NA
+for (i in 1:39) {
+  normCounts_group1 <- c(normCounts_group1, as.matrix(normCounts[df$gene_id[5], colnames(dds[, dds$group1])])[i])
+}
+normCounts_group2 <- NA
+for (i in 1:11) {
+  normCounts_group2 <- c(normCounts_group2, as.matrix(normCounts[df$gene_id[5], colnames(dds[, dds$group2])])[i])
+}
+df_1 <- data.frame()
+df_1 <- data.frame(rep("group1", 39))
+df_1 <- df_1 %>% rename("group" = 'rep..group1...39.')
+df_1$normCounts <- normCounts_group1[2:40]
+
+df_2 <- data.frame()
+df_2 <- data.frame(rep("group2", 11))
+df_2 <- df_2 %>% rename("group" = 'rep..group2...11.')
+df_2$normCounts <- normCounts_group1[2:12]
+
+df <- rbind(df_1, df_2)
+ggplot(df, aes(group, normCounts, fill = group)) + geom_violin() + xlab("Group") + ylab("Normalized Counts") +
+  ggtitle("Distribution of Normalized Counts of NCCRP1 by Group")
+ggsave('NCCRP1.png', plot = last_plot(), units = 'px', width = 2000, height = 1000)
+```
+
+```{r}
+df <- resOutput %>% filter(gene_name %in% genes)
+normCounts  <- as.data.frame(counts(dds, normalized = T))
+normCounts_group1 <- NA
+for (i in 1:39) {
+  normCounts_group1 <- c(normCounts_group1, as.matrix(normCounts[df$gene_id[6], colnames(dds[, dds$group1])])[i])
+}
+normCounts_group2 <- NA
+for (i in 1:11) {
+  normCounts_group2 <- c(normCounts_group2, as.matrix(normCounts[df$gene_id[6], colnames(dds[, dds$group2])])[i])
+}
+df_1 <- data.frame()
+df_1 <- data.frame(rep("group1", 39))
+df_1 <- df_1 %>% rename("group" = 'rep..group1...39.')
+df_1$normCounts <- normCounts_group1[2:40]
+
+df_2 <- data.frame()
+df_2 <- data.frame(rep("group2", 11))
+df_2 <- df_2 %>% rename("group" = 'rep..group2...11.')
+df_2$normCounts <- normCounts_group1[2:12]
+
+df <- rbind(df_1, df_2)
+ggplot(df, aes(group, normCounts, fill = group)) + geom_violin() + xlab("Group") + ylab("Normalized Counts") +
+  ggtitle("Distribution of Normalized Counts of AC010789.1 by Group")
+ggsave('AC010789.1.png', plot = last_plot(), units = 'px', width = 2000, height = 1000)
+```
+
+```{r}
+data <- as.data.frame(pca$x)
+rownames(data) <- substr(rownames(data), 1, 16)
+data$group <- NA
+data$group[rownames(data) %in% group1$`Sample ID`] <- 'group1'
+data$group[rownames(data) %in% group2$`Sample ID`] <- 'group2'
+summary(pca)
+ggplot(data, aes(x = PC1, y = PC2, color = group, shape = group)) + geom_point() + 
+  ggtitle("Principle Component Analysis by Groups") +
+  xlab('PC1 (57.11%)') + ylab('PC2 (44.69%)')
+ggsave('pca.png', plot = last_plot(), units = 'px', width = 2000, height = 1000)
+```
+
